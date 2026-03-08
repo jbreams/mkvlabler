@@ -13,13 +13,24 @@ async fn get_json<T: DeserializeOwned>(url: &str) -> Result<T, String> {
         .map_err(|e| e.to_string())
 }
 
-pub async fn fetch_root() -> Result<String, String> {
+pub async fn fetch_root() -> Result<(String, bool), String> {
     #[derive(serde::Deserialize)]
     struct Resp {
         root: String,
+        tmdb_enabled: bool,
     }
     let r: Resp = get_json("/api/root").await?;
-    Ok(r.root)
+    Ok((r.root, r.tmdb_enabled))
+}
+
+pub async fn search_tmdb(query: &str) -> Result<Vec<MovieResult>, String> {
+    #[derive(serde::Deserialize)]
+    struct Resp {
+        results: Vec<MovieResult>,
+    }
+    let url = format!("/api/tmdb/search?q={}", urlencoding::encode(query));
+    let r: Resp = get_json(&url).await?;
+    Ok(r.results)
 }
 
 pub async fn fetch_dirs(prefix: &str) -> Result<Vec<String>, String> {

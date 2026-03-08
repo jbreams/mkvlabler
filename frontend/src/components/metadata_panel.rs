@@ -25,6 +25,7 @@ pub fn metadata_panel() -> Html {
             if query.is_empty() {
                 return;
             }
+            let tmdb_enabled = ctx.tmdb_enabled;
 
             // TVmaze search
             {
@@ -37,7 +38,19 @@ pub fn metadata_panel() -> Html {
                             ctx2.dispatch(AppAction::SetTvShows(shows));
                             ctx2.dispatch(AppAction::SetStatus(String::new()));
                         }
-                        Err(e) => ctx2.dispatch(AppAction::SetStatus(format!("TVmaze error: {e}"))),
+                        Err(e) => ctx2.dispatch(AppAction::SetStatus(format!("TVmaze: {e}"))),
+                    }
+                });
+            }
+
+            // TMDB movie search (only if key is configured)
+            if tmdb_enabled {
+                let ctx2 = ctx.clone();
+                let query = query.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    match crate::api::search_tmdb(&query).await {
+                        Ok(movies) => ctx2.dispatch(AppAction::SetMovies(movies)),
+                        Err(e) => ctx2.dispatch(AppAction::SetStatus(format!("TMDB: {e}"))),
                     }
                 });
             }
@@ -48,7 +61,7 @@ pub fn metadata_panel() -> Html {
                 wasm_bindgen_futures::spawn_local(async move {
                     match crate::api::search_dvdcompare(&query).await {
                         Ok(results) => ctx2.dispatch(AppAction::SetDvdResults(results)),
-                        Err(e) => ctx2.dispatch(AppAction::SetStatus(format!("DVDCompare error: {e}"))),
+                        Err(e) => ctx2.dispatch(AppAction::SetStatus(format!("DVDCompare: {e}"))),
                     }
                 });
             }
@@ -94,10 +107,10 @@ pub fn metadata_panel() -> Html {
     // ── Tab content ───────────────────────────────────────────────────────────
 
     let tab_content = match ctx.active_tab {
-        ActiveTab::Shows => render_shows(&ctx),
+        ActiveTab::Results  => render_results(&ctx),
         ActiveTab::Episodes => render_episodes(&ctx),
         ActiveTab::Features => render_features(&ctx),
-        ActiveTab::Dvd => render_dvd(&ctx),
+        ActiveTab::Dvd      => render_dvd(&ctx),
     };
 
     html! {
@@ -115,10 +128,10 @@ pub fn metadata_panel() -> Html {
             </div>
 
             <div class="tab-bar">
-                { make_tab(ActiveTab::Shows, "Shows") }
+                { make_tab(ActiveTab::Results,  "Results") }
                 { make_tab(ActiveTab::Episodes, "Episodes") }
                 { make_tab(ActiveTab::Features, "Features") }
-                { make_tab(ActiveTab::Dvd, "DVDCompare") }
+                { make_tab(ActiveTab::Dvd,      "DVDCompare") }
             </div>
 
             <div class="metadata-results">
@@ -128,36 +141,95 @@ pub fn metadata_panel() -> Html {
     }
 }
 
-fn render_shows(ctx: &AppContext) -> Html {
-    if ctx.tv_shows.is_empty() {
+// ── Results tab — TVmaze shows + TMDB movies interleaved ─────────────────────
+
+fn render_results(ctx: &AppContext) -> Html {
+    let tv = &ctx.tv_shows;
+    let movies = &ctx.movies;
+
+    if tv.is_empty() && movies.is_empty() {
         return html! {
             <div class="empty-state">
-                {"Search for a show or movie"}<br/>{"to see episodes and features."}
+                {"Search for a show or movie"}<br/>
+                {"to see results here."}
             </div>
         };
     }
 
-    ctx.tv_shows
-        .iter()
-        .map(|show| {
+    // Interleave TV and movie results so both sources are visible together.
+    let max = tv.len().max(movies.len());
+    let mut items: Vec<Html> = Vec::with_capacity(tv.len() + movies.len());
+
+    for i in 0..max {
+        if let Some(show) = tv.get(i) {
             let ctx = ctx.clone();
             let id = show.id;
             let is_active = ctx.selected_show == Some(id);
             let cb = Callback::from(move |_| ctx.dispatch(AppAction::SelectShow(Some(id))));
-            html! {
-                <div class={format!("result-item{}", if is_active { " active" } else { "" })} onclick={cb}>
-                    <div class="result-title">{ &show.name }</div>
-                    <div class="result-sub">
-                        { format!("{} · {}", show.year, show.source) }
+            items.push(html! {
+                <div
+                    class={format!("result-item{}", if is_active { " active" } else { "" })}
+                    onclick={cb}
+                >
+                    <div class="result-title-row">
+                        <span class="result-title">{ &show.name }</span>
+                        <span class="source-badge source-tv">{"TV"}</span>
                     </div>
+                    <div class="result-sub">{ &show.year }</div>
                     { if !show.summary.is_empty() {
                         html! { <div class="result-sub">{ &show.summary }</div> }
                     } else { html! {} }}
                 </div>
-            }
-        })
-        .collect()
+            });
+        }
+
+        if let Some(movie) = movies.get(i) {
+            let ctx = ctx.clone();
+            let id = movie.id;
+            let is_active = ctx.selected_movie == Some(id);
+            let title = movie.title.clone();
+            let year = movie.year.clone();
+            let overview = movie.overview.clone();
+            let cb = Callback::from(move |_| {
+                ctx.dispatch(AppAction::SelectMovie(Some(id)));
+                if let Some(ref file_id) = ctx.selected_file {
+                    let new_name = if year.is_empty() {
+                        title.clone()
+                    } else {
+                        format!("{} ({})", title, year)
+                    };
+                    ctx.dispatch(AppAction::SetMapping(
+                        file_id.clone(),
+                        Mapping {
+                            new_name: new_name.clone(),
+                            label: new_name,
+                            kind: MappingKind::Movie,
+                        },
+                    ));
+                }
+            });
+            items.push(html! {
+                <div
+                    class={format!("result-item{}", if is_active { " active" } else { "" })}
+                    onclick={cb}
+                >
+                    <div class="result-title-row">
+                        <span class="result-title">{ &movie.title }</span>
+                        <span class="source-badge source-movie">{"Movie"}</span>
+                    </div>
+                    <div class="result-sub">{ &movie.year }</div>
+                    { if !overview.is_empty() {
+                        html! { <div class="result-sub">{ overview }</div> }
+                    } else { html! {} }}
+                </div>
+            });
+        }
+    }
+
+    items.into_iter().collect()
 }
+
+// ── Episodes tab ──────────────────────────────────────────────────────────────
 
 fn render_episodes(ctx: &AppContext) -> Html {
     if ctx.episodes.is_empty() {
@@ -210,6 +282,8 @@ fn render_episodes(ctx: &AppContext) -> Html {
         .collect()
 }
 
+// ── Features tab ──────────────────────────────────────────────────────────────
+
 fn render_features(ctx: &AppContext) -> Html {
     if ctx.dvd_features.is_empty() {
         return html! {
@@ -252,6 +326,8 @@ fn render_features(ctx: &AppContext) -> Html {
         })
         .collect()
 }
+
+// ── DVDCompare tab ────────────────────────────────────────────────────────────
 
 fn render_dvd(ctx: &AppContext) -> Html {
     if ctx.dvd_results.is_empty() {

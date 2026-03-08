@@ -18,13 +18,13 @@ fn app() -> Html {
     let dir_ref = use_node_ref();
     let suggestions = use_state(Vec::<String>::new);
 
-    // Fetch the configured root directory once on mount.
+    // Fetch the configured root directory and feature flags once on mount.
     use_effect_with((), {
         let ctx = ctx.clone();
         move |_| {
             spawn_local(async move {
-                if let Ok(root) = api::fetch_root().await {
-                    ctx.dispatch(AppAction::SetRootDir(root));
+                if let Ok((root, tmdb_enabled)) = api::fetch_root().await {
+                    ctx.dispatch(AppAction::SetRootDir { root, tmdb_enabled });
                 }
             });
             || ()

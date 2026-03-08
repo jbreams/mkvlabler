@@ -6,6 +6,7 @@ use crate::types::*;
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AppState {
     pub root_dir: String,
+    pub tmdb_enabled: bool,
     pub files: Vec<VideoFile>,
     pub clusters: Vec<Vec<String>>,
     pub mappings: Mappings,
@@ -17,6 +18,8 @@ pub struct AppState {
     pub tv_shows: Vec<ShowResult>,
     pub selected_show: Option<u64>,
     pub episodes: Vec<EpisodeResult>,
+    pub movies: Vec<MovieResult>,
+    pub selected_movie: Option<u64>,
     pub dvd_results: Vec<DvdSearchResult>,
     pub dvd_features: Vec<DvdFeature>,
     pub selected_dvd: Option<String>,
@@ -37,7 +40,7 @@ impl AppState {
 }
 
 pub enum AppAction {
-    SetRootDir(String),
+    SetRootDir { root: String, tmdb_enabled: bool },
     SetDirectory(String),
     SetScanning(bool),
     SetStatus(String),
@@ -51,6 +54,8 @@ pub enum AppAction {
     SetTvShows(Vec<ShowResult>),
     SelectShow(Option<u64>),
     SetEpisodes(Vec<EpisodeResult>),
+    SetMovies(Vec<MovieResult>),
+    SelectMovie(Option<u64>),
     SetDvdResults(Vec<DvdSearchResult>),
     SelectDvd(Option<String>),
     SetDvdFeatures(Vec<DvdFeature>),
@@ -63,7 +68,10 @@ impl Reducible for AppState {
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         let mut s = (*self).clone();
         match action {
-            AppAction::SetRootDir(root) => s.root_dir = root,
+            AppAction::SetRootDir { root, tmdb_enabled } => {
+                s.root_dir = root;
+                s.tmdb_enabled = tmdb_enabled;
+            }
             AppAction::SetDirectory(dir) => s.directory = dir,
             AppAction::SetScanning(b) => s.scanning = b,
             AppAction::SetStatus(msg) => s.status = msg,
@@ -92,6 +100,11 @@ impl Reducible for AppState {
             }
             AppAction::SelectShow(id) => s.selected_show = id,
             AppAction::SetEpisodes(eps) => s.episodes = eps,
+            AppAction::SetMovies(movies) => {
+                s.movies = movies;
+                s.selected_movie = None;
+            }
+            AppAction::SelectMovie(id) => s.selected_movie = id,
             AppAction::SetDvdResults(results) => {
                 s.dvd_results = results;
                 s.selected_dvd = None;

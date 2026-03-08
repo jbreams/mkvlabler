@@ -60,6 +60,7 @@ pub struct Mapping {
 pub enum MappingKind {
     Episode,
     Feature,
+    Movie,
     Special,
 }
 
@@ -102,6 +103,16 @@ pub struct EpisodeResult {
     pub filename_stem: String,
 }
 
+// ── TMDB ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MovieResult {
+    pub id: u64,
+    pub title: String,
+    pub year: String,
+    pub overview: String,
+}
+
 // ── DVDCompare ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -130,7 +141,7 @@ pub enum SortMode {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ActiveTab {
     #[default]
-    Shows,
+    Results,
     Episodes,
     Features,
     Dvd,

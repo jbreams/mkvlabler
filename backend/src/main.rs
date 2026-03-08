@@ -6,6 +6,7 @@ mod preview;
 mod rename;
 mod scan;
 mod state;
+mod tmdb;
 mod tvmaze;
 mod types;
 
@@ -33,6 +34,10 @@ struct Args {
     /// Root directory — all scan paths are relative to this
     #[arg(long, default_value = ".")]
     dir: String,
+
+    /// TMDB API key for movie search (get one free at themoviedb.org)
+    #[arg(long)]
+    tmdb_key: Option<String>,
 }
 
 #[tokio::main]
@@ -53,7 +58,10 @@ async fn main() {
         Err(e) => tracing::warn!("could not auto-download ffmpeg ({e}); falling back to system ffmpeg/ffprobe"),
     }
 
-    let state = AppState::new(args.dir.clone());
+    let state = AppState::new(args.dir.clone(), args.tmdb_key.clone());
+    if args.tmdb_key.is_some() {
+        info!("TMDB movie search enabled");
+    }
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -70,6 +78,7 @@ async fn main() {
         .route("/api/dvdcompare/disc", get(dvdcompare::disc_handler))
         .route("/api/tvmaze/search", get(tvmaze::search_handler))
         .route("/api/tvmaze/episodes", get(tvmaze::episodes_handler))
+        .route("/api/tmdb/search", get(tmdb::search_handler))
         .route("/api/rename", post(rename::handler))
         .layer(TraceLayer::new_for_http())
         .layer(cors)

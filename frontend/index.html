@@ -293,8 +293,12 @@
       .result-item { padding: 7px 12px; cursor: pointer; border-left: 3px solid transparent; transition: all .1s; }
       .result-item:hover { background: var(--surface2); border-left-color: var(--accent2); }
       .result-item.active { background: rgba(59,130,246,.08); border-left-color: var(--accent2); }
-      .result-title { font-family: var(--mono); font-size: 11px; color: var(--text); }
+      .result-title-row { display: flex; align-items: center; gap: 6px; }
+      .result-title { font-family: var(--mono); font-size: 11px; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .result-sub { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
+      .source-badge { font-family: var(--mono); font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 2px; flex-shrink: 0; letter-spacing: .3px; }
+      .source-tv    { background: rgba(59,130,246,.18); color: var(--accent2); }
+      .source-movie { background: rgba(244,164,41,.18);  color: var(--accent); }
 
       .episode-item { padding: 5px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background .1s; }
       .episode-item:hover { background: var(--surface2); }

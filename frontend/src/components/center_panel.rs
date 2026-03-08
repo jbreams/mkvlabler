@@ -1,3 +1,4 @@
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 use crate::{
@@ -6,16 +7,16 @@ use crate::{
     types::{Mapping, MappingKind},
 };
 
-const SPECIAL_TYPES: &[&str] = &[
-    "Behind the Scenes",
-    "Deleted Scenes",
-    "Featurette",
-    "Interview",
-    "Scene",
-    "Short",
-    "Trailer",
-    "Teaser",
-    "Theme",
+/// (human label, Plex inline suffix)  — must match Plex extras spec exactly.
+const SPECIAL_TYPES: &[(&str, &str)] = &[
+    ("Behind the Scenes", "behindthescenes"),
+    ("Deleted Scenes",    "deleted"),
+    ("Featurette",        "featurette"),
+    ("Interview",         "interview"),
+    ("Scene",             "scene"),
+    ("Short",             "short"),
+    ("Trailer",           "trailer"),
+    ("Other",             "other"),
 ];
 
 #[function_component(CenterPanel)]
@@ -23,10 +24,50 @@ pub fn center_panel() -> Html {
     let ctx = use_context::<AppContext>().expect("AppContext missing");
     let video_ref = use_node_ref();
 
-    // Persist start/duration across file selections — these live at component
-    // level so they survive re-renders caused by selecting a different file.
+    // Persist start/duration across file selections.
     let preview_start = use_state(|| 30.0_f64);
     let preview_dur = use_state(|| 12.0_f64);
+
+    // ── Feature title text box ─────────────────────────────────────────────
+    // All hooks must be called before any early return.
+
+    let feature_title = use_state(String::new);
+
+    // Derive deps from ctx before we potentially return early.
+    let current_file_id = ctx.selected_file.clone().unwrap_or_default();
+    let current_stem = ctx.selected_file.as_ref()
+        .and_then(|id| ctx.files.iter().find(|f| &f.id == id))
+        .map(|f| f.stem.clone())
+        .unwrap_or_default();
+    // Only watch Feature-kind mappings — Special/Movie/Episode clicks don't
+    // touch the text box.
+    let current_feature_label = ctx.selected_file.as_ref()
+        .and_then(|id| ctx.mappings.get(id))
+        .filter(|m| m.kind == MappingKind::Feature)
+        .map(|m| m.label.clone());
+
+    // When the selected file changes: reset the text box to the new file's stem.
+    use_effect_with(current_file_id, {
+        let feature_title = feature_title.clone();
+        let stem = current_stem;
+        move |_| {
+            feature_title.set(stem);
+            || ()
+        }
+    });
+
+    // When a DVDCompare feature is mapped: update the text box to its title.
+    use_effect_with(current_feature_label, {
+        let feature_title = feature_title.clone();
+        move |label: &Option<String>| {
+            if let Some(label) = label {
+                feature_title.set(label.clone());
+            }
+            || ()
+        }
+    });
+
+    // ── Early returns (after all hooks) ───────────────────────────────────────
 
     let Some(ref selected_id) = ctx.selected_file.clone() else {
         return html! {
@@ -54,7 +95,7 @@ pub fn center_panel() -> Html {
     let on_start_input = {
         let preview_start = preview_start.clone();
         Callback::from(move |e: InputEvent| {
-            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+            let input: HtmlInputElement = e.target_unchecked_into();
             if let Ok(v) = input.value().parse::<f64>() {
                 preview_start.set(v.max(0.0));
             }
@@ -64,7 +105,7 @@ pub fn center_panel() -> Html {
     let on_dur_input = {
         let preview_dur = preview_dur.clone();
         Callback::from(move |e: InputEvent| {
-            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+            let input: HtmlInputElement = e.target_unchecked_into();
             if let Ok(v) = input.value().parse::<f64>() {
                 preview_dur.set(v.max(1.0));
             }
@@ -109,9 +150,8 @@ pub fn center_panel() -> Html {
         let start = *preview_start;
         let dur = *preview_dur;
         Callback::from(move |_| {
-            let src = preview_url(&path, start, dur);
             if let Some(video) = video_ref.cast::<web_sys::HtmlVideoElement>() {
-                video.set_src(&src);
+                video.set_src(&preview_url(&path, start, dur));
                 let _ = video.load();
                 let _ = video.play();
             }
@@ -140,27 +180,39 @@ pub fn center_panel() -> Html {
         Callback::from(move |_| ctx.dispatch(AppAction::UnmapFile(id.clone())))
     };
 
+    // ── Feature title input ───────────────────────────────────────────────────
+
+    let on_title_input = {
+        let feature_title = feature_title.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            feature_title.set(input.value());
+        })
+    };
+
     // ── Quick-assign special feature ─────────────────────────────────────────
 
     let special_buttons: Html = SPECIAL_TYPES
         .iter()
-        .map(|&kind| {
+        .map(|&(label, plex_suffix)| {
             let ctx = ctx.clone();
             let id = file.id.clone();
-            let stem = file.stem.clone();
-            let kind_str = kind.to_string();
+            // Use whatever is currently in the feature title text box.
+            let description = (*feature_title).clone();
+            let plex_suffix = plex_suffix.to_string();
+            let label_str = label.to_string();
             let cb = Callback::from(move |_| {
-                let new_name = format!("{} - {}", stem, kind_str);
+                let new_name = format!("{}-{}", description, plex_suffix);
                 ctx.dispatch(AppAction::SetMapping(
                     id.clone(),
                     Mapping {
-                        new_name: new_name.clone(),
-                        label: new_name,
+                        new_name,
+                        label: label_str.clone(),
                         kind: MappingKind::Special,
                     },
                 ));
             });
-            html! { <button class="small assign-btn" onclick={cb}>{ kind }</button> }
+            html! { <button class="small assign-btn" onclick={cb}>{ label }</button> }
         })
         .collect();
 
@@ -325,7 +377,14 @@ pub fn center_panel() -> Html {
                 }}
 
                 <div class="quick-assign">
-                    <h4>{"Quick assign special feature type"}</h4>
+                    <h4>{"Special feature"}</h4>
+                    <input
+                        type="text"
+                        value={(*feature_title).clone()}
+                        oninput={on_title_input}
+                        placeholder="Feature description..."
+                        style="width:100%;margin-bottom:6px"
+                    />
                     <div class="assign-grid">{ special_buttons }</div>
                 </div>
 
