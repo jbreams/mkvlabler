@@ -67,17 +67,15 @@ pub async fn disc_handler(
 
 async fn search_dvdcompare(query: &str) -> Result<Vec<SearchResult>, DvdCompareError> {
     debug!(query, "DVDCompare search");
-    let url = format!(
-        "https://www.dvdcompare.net/comparisons/search.php?title={}",
-        urlencoding::encode(query)
-    );
 
+    // The site uses a POST form with `param` + `searchtype` fields.
     let html = reqwest::Client::new()
-        .get(&url)
+        .post("https://www.dvdcompare.net/comparisons/search.php")
         .header(
             "User-Agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         )
+        .form(&[("param", query), ("searchtype", "text")])
         .send()
         .await
         .context(HttpSnafu)?
@@ -90,7 +88,8 @@ async fn search_dvdcompare(query: &str) -> Result<Vec<SearchResult>, DvdCompareE
 
 fn parse_search_results(html: &str) -> Vec<SearchResult> {
     let document = Html::parse_document(html);
-    let Ok(selector) = Selector::parse("a[href*='comparisons/film.php']") else {
+    // Links use relative hrefs like `film.php?fid=123`
+    let Ok(selector) = Selector::parse("a[href*='film.php?fid=']") else {
         return vec![];
     };
 
@@ -99,18 +98,24 @@ fn parse_search_results(html: &str) -> Vec<SearchResult> {
 
     for el in document.select(&selector) {
         let href = el.attr("href").unwrap_or("");
-        let compid = href.split("compid=").nth(1).unwrap_or("").to_string();
-        if compid.is_empty() || seen.contains(&compid) {
+        let fid = href.split("fid=").nth(1).unwrap_or("").to_string();
+        if fid.is_empty() || seen.contains(&fid) {
             continue;
         }
-        let title = el.text().collect::<String>().trim().to_string();
+        // Collapse whitespace (titles span multiple text nodes)
+        let title = el
+            .text()
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         if title.is_empty() {
             continue;
         }
-        seen.insert(compid.clone());
+        seen.insert(fid.clone());
         results.push(SearchResult {
-            url: format!("https://www.dvdcompare.net{href}"),
-            compid,
+            url: format!("https://www.dvdcompare.net/comparisons/film.php?fid={fid}"),
+            compid: fid,
             title,
         });
         if results.len() >= 20 {
@@ -123,9 +128,7 @@ fn parse_search_results(html: &str) -> Vec<SearchResult> {
 
 async fn fetch_disc(compid: &str) -> Result<DiscResponse, DvdCompareError> {
     debug!(compid, "DVDCompare disc fetch");
-    let url = format!(
-        "https://www.dvdcompare.net/comparisons/film.php?compid={compid}"
-    );
+    let url = format!("https://www.dvdcompare.net/comparisons/film.php?fid={compid}");
 
     let html = reqwest::Client::new()
         .get(&url)
@@ -140,13 +143,10 @@ async fn fetch_disc(compid: &str) -> Result<DiscResponse, DvdCompareError> {
         .await
         .context(BodySnafu)?;
 
-    Ok(parse_disc(&html, compid))
+    Ok(parse_disc(&html, compid, &url))
 }
 
-fn parse_disc(html: &str, compid: &str) -> DiscResponse {
-    let base_url =
-        format!("https://www.dvdcompare.net/comparisons/film.php?compid={compid}");
-
+fn parse_disc(html: &str, compid: &str, url: &str) -> DiscResponse {
     let document = Html::parse_document(html);
 
     let title = Selector::parse("title")
@@ -155,45 +155,70 @@ fn parse_disc(html: &str, compid: &str) -> DiscResponse {
         .map(|el| el.text().collect::<String>().trim().to_string())
         .unwrap_or_default();
 
+    // Timecodes appear as (M:SS) or (H:MM:SS) in parentheses
     let timecode_re =
-        regex::Regex::new(r"\b\d{1,2}:\d{2}(?::\d{2})?\b").expect("valid regex");
+        regex::Regex::new(r"\((\d{1,2}:\d{2}(?::\d{2})?)\)").expect("valid regex");
 
-    let Ok(row_sel) = Selector::parse("tr") else {
-        return DiscResponse { compid: compid.to_string(), title, features: vec![], url: base_url };
+    let Ok(desc_sel) = Selector::parse("div.description") else {
+        return DiscResponse {
+            compid: compid.to_string(),
+            title,
+            features: vec![],
+            url: url.to_string(),
+        };
     };
-    let Ok(cell_sel) = Selector::parse("td, th") else {
-        return DiscResponse { compid: compid.to_string(), title, features: vec![], url: base_url };
+
+    // Strip HTML tags from a string by parsing it as a fragment
+    let strip_tags = |s: &str| -> String {
+        Html::parse_fragment(s)
+            .root_element()
+            .text()
+            .collect::<String>()
     };
 
-    let mut features = Vec::new();
+    let mut features: Vec<Feature> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
-    for row in document.select(&row_sel) {
-        let cells: Vec<String> = row
-            .select(&cell_sel)
-            .map(|c| c.text().collect::<String>().trim().to_string())
-            .collect();
+    'outer: for desc in document.select(&desc_sel) {
+        // inner_html() returns raw HTML; <br> elements separate lines.
+        // html5ever normalises XHTML <br /> → <br> in the DOM.
+        let inner = desc.inner_html();
 
-        let row_text = cells.join(" ");
-        let timecodes: Vec<String> = timecode_re
-            .find_iter(&row_text)
-            .map(|m| m.as_str().to_string())
-            .collect();
+        for raw_line in inner.split("<br>") {
+            let text = strip_tags(raw_line);
+            let text = text.trim();
+            if text.is_empty() {
+                continue;
+            }
 
-        if timecodes.is_empty() || cells.len() < 2 {
-            continue;
-        }
+            let timecodes: Vec<String> = timecode_re
+                .captures_iter(text)
+                .map(|c| c[1].to_string())
+                .collect();
+            if timecodes.is_empty() {
+                continue;
+            }
 
-        if let Some(feat_title) = cells
-            .iter()
-            .find(|c| !c.is_empty() && !timecode_re.is_match(c) && c.len() > 2)
-        {
-            features.push(Feature { title: feat_title.clone(), timecodes });
-        }
+            // Remove the timecode(s) from the string to isolate the title
+            let feat_title = timecode_re
+                .replace_all(text, "")
+                .trim_matches(|c: char| {
+                    matches!(c, '-' | '*' | '"' | '\'' | '(' | ')') || c.is_whitespace()
+                })
+                .trim_end_matches(':')
+                .to_string();
 
-        if features.len() >= 50 {
-            break;
+            if feat_title.is_empty() || seen.contains(&feat_title) {
+                continue;
+            }
+            seen.insert(feat_title.clone());
+            features.push(Feature { title: feat_title, timecodes });
+
+            if features.len() >= 100 {
+                break 'outer;
+            }
         }
     }
 
-    DiscResponse { compid: compid.to_string(), title, features, url: base_url }
+    DiscResponse { compid: compid.to_string(), title, features, url: url.to_string() }
 }

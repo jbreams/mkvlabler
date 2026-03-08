@@ -25,24 +25,33 @@ pub fn metadata_panel() -> Html {
             if query.is_empty() {
                 return;
             }
-            let ctx2 = ctx.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                ctx2.dispatch(AppAction::SetStatus("Searching TVmaze...".to_string()));
-                match crate::api::search_tvmaze(&query).await {
-                    Ok(shows) => {
-                        ctx2.dispatch(AppAction::SetTvShows(shows));
-                        ctx2.dispatch(AppAction::SetActiveTab(ActiveTab::Shows));
-                        ctx2.dispatch(AppAction::SetStatus(String::new()));
-                    }
-                    Err(e) => ctx2.dispatch(AppAction::SetStatus(format!("TVmaze error: {e}"))),
-                }
 
-                // Also search DVDCompare
-                match crate::api::search_dvdcompare(&query).await {
-                    Ok(results) => ctx2.dispatch(AppAction::SetDvdResults(results)),
-                    Err(_) => {}
-                }
-            });
+            // TVmaze search
+            {
+                let ctx2 = ctx.clone();
+                let query = query.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    ctx2.dispatch(AppAction::SetStatus("Searching...".to_string()));
+                    match crate::api::search_tvmaze(&query).await {
+                        Ok(shows) => {
+                            ctx2.dispatch(AppAction::SetTvShows(shows));
+                            ctx2.dispatch(AppAction::SetStatus(String::new()));
+                        }
+                        Err(e) => ctx2.dispatch(AppAction::SetStatus(format!("TVmaze error: {e}"))),
+                    }
+                });
+            }
+
+            // DVDCompare search (runs in parallel)
+            {
+                let ctx2 = ctx.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    match crate::api::search_dvdcompare(&query).await {
+                        Ok(results) => ctx2.dispatch(AppAction::SetDvdResults(results)),
+                        Err(e) => ctx2.dispatch(AppAction::SetStatus(format!("DVDCompare error: {e}"))),
+                    }
+                });
+            }
         })
     };
 

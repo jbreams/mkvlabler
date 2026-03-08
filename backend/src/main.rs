@@ -1,3 +1,4 @@
+mod dirs;
 mod dvdcompare;
 mod error;
 mod ffprobe;
@@ -29,7 +30,7 @@ struct Args {
     #[arg(long, default_value_t = 7432)]
     port: u16,
 
-    /// Default directory to scan
+    /// Root directory — all scan paths are relative to this
     #[arg(long, default_value = ".")]
     dir: String,
 }
@@ -60,6 +61,8 @@ async fn main() {
         .allow_headers(Any);
 
     let app = Router::new()
+        .route("/api/root", get(dirs::root_handler))
+        .route("/api/dirs", get(dirs::dirs_handler))
         .route("/api/scan", get(scan::handler))
         .route("/api/preview", get(preview::handler))
         .route("/api/preview/stop", get(preview::stop_handler))

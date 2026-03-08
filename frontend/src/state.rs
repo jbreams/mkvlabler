@@ -5,6 +5,7 @@ use crate::types::*;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AppState {
+    pub root_dir: String,
     pub files: Vec<VideoFile>,
     pub clusters: Vec<Vec<String>>,
     pub mappings: Mappings,
@@ -36,6 +37,7 @@ impl AppState {
 }
 
 pub enum AppAction {
+    SetRootDir(String),
     SetDirectory(String),
     SetScanning(bool),
     SetStatus(String),
@@ -61,6 +63,7 @@ impl Reducible for AppState {
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         let mut s = (*self).clone();
         match action {
+            AppAction::SetRootDir(root) => s.root_dir = root,
             AppAction::SetDirectory(dir) => s.directory = dir,
             AppAction::SetScanning(b) => s.scanning = b,
             AppAction::SetStatus(msg) => s.status = msg,

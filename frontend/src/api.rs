@@ -13,6 +13,25 @@ async fn get_json<T: DeserializeOwned>(url: &str) -> Result<T, String> {
         .map_err(|e| e.to_string())
 }
 
+pub async fn fetch_root() -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct Resp {
+        root: String,
+    }
+    let r: Resp = get_json("/api/root").await?;
+    Ok(r.root)
+}
+
+pub async fn fetch_dirs(prefix: &str) -> Result<Vec<String>, String> {
+    #[derive(serde::Deserialize)]
+    struct Resp {
+        dirs: Vec<String>,
+    }
+    let url = format!("/api/dirs?prefix={}", urlencoding::encode(prefix));
+    let r: Resp = get_json(&url).await?;
+    Ok(r.dirs)
+}
+
 pub async fn scan_dir(dir: &str) -> Result<ScanResponse, String> {
     let url = format!("/api/scan?dir={}", urlencoding::encode(dir));
     get_json(&url).await

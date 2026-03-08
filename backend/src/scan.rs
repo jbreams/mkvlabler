@@ -42,15 +42,20 @@ pub async fn handler(
     State(state): State<AppState>,
     Query(params): Query<ScanParams>,
 ) -> Result<Json<ScanResponse>, AppError> {
-    let dir = params.dir.unwrap_or(state.default_dir);
-    let base = PathBuf::from(&dir);
+    let rel = params.dir.unwrap_or_default();
 
-    if !base.is_dir() {
-        warn!("scan rejected: not a directory: {dir}");
-        return Err(AppError::bad_request(format!("Not a directory: {dir}")));
+    if rel.contains("..") {
+        return Err(AppError::bad_request("Path must not contain '..'"));
     }
 
-    info!("scanning {dir}");
+    let base = PathBuf::from(&state.root_dir).join(&rel);
+
+    if !base.is_dir() {
+        warn!("scan rejected: not a directory: {}", base.display());
+        return Err(AppError::bad_request(format!("Not a directory: {}", base.display())));
+    }
+
+    info!("scanning {} (root={})", rel, state.root_dir);
     let files = scan_directory(&base)
         .await
         .map_err(|e| AppError::internal(e))?;
@@ -62,7 +67,8 @@ pub async fn handler(
         clusters.len()
     );
 
-    Ok(Json(ScanResponse { files, clusters, directory: dir }))
+    // Return the relative path so the frontend can re-scan after rename.
+    Ok(Json(ScanResponse { files, clusters, directory: rel }))
 }
 
 async fn scan_directory(base: &Path) -> Result<Vec<VideoFile>, ScanError> {
